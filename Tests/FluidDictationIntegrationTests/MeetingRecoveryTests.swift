@@ -3744,6 +3744,38 @@ final class MeetingRecoveryTests: XCTestCase {
         XCTAssertNil(coordinator.latestCompletedSession)
     }
 
+    func testUndoingACrossTrackMergeRestoresTheTranscript() async throws {
+        let dir = self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MeetingSessionStore(rootDirectory: dir)
+        let microphone = self.makeMicrophoneTrack(chunks: [self.makeFinalizedChunk()])
+        var application = self.makeMicrophoneTrack(chunks: [])
+        application.kind = .applicationAudio
+        var session = self.makeSession(state: .completed, endedAt: Date(), audioTracks: [microphone, application])
+        session.mode = .onlineCall
+        session.capturedApplication = MeetingApplicationIdentity(bundleIdentifier: "us.zoom.xos", displayName: "Zoom Workplace")
+        let remote = self.makeSpeaker(name: "Remote", trackKind: .applicationAudio)
+        let copy = self.makeSpeaker(name: "Copy", trackKind: .microphone)
+        session.speakers = [remote, copy]
+        session.transcriptSegments = [
+            self.makeTranscriptSegment(sourceTrackID: application.id, speakerID: remote.id),
+            self.makeTranscriptSegment(sourceTrackID: microphone.id, speakerID: copy.id),
+        ]
+        try await store.create(session)
+        let coordinator = MeetingSessionCoordinator(
+            store: store, capture: StubCaptureController(), processing: StubProcessingController(), audioArbiter: StubArbiter()
+        )
+
+        _ = try await coordinator.editSpeakers(sessionID: session.id, edits: MeetingSpeakerEdits(names: [:], merges: [copy.id: remote.id]))
+
+        let restored = try await coordinator.undoTranscriptCorrection(sessionID: session.id)
+
+        XCTAssertEqual(restored.transcriptSegments, session.transcriptSegments)
+        XCTAssertEqual(restored.speakers, session.speakers)
+        let saved = try await store.load(id: session.id)
+        XCTAssertEqual(saved?.transcriptSegments, session.transcriptSegments)
+    }
+
     func testTaggingUnknownMergesMatchingNeighborsAndUndoRestoresAllWords() async throws {
         let dir = self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

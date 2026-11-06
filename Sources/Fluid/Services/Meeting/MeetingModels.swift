@@ -1175,14 +1175,25 @@ nonisolated struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
         }
         let source = self.speakers[sourceIndex]
         let target = self.speakers[targetIndex]
-        guard !source.isLocalUser, !target.isLocalUser, source.trackKind == target.trackKind else {
+        guard !source.isLocalUser, !target.isLocalUser else {
             throw MeetingDomainError.cannotMergeSpeakers
         }
-        for index in self.transcriptSegments.indices where self.transcriptSegments[index].speakerID == sourceID {
-            self.transcriptSegments[index].speakerID = targetID
-            self.transcriptSegments[index].revision += 1
+        // One voice on both tracks is a remote participant leaking into the microphone: the meeting
+        // audio is the real voice and the microphone copy is echo.
+        let crossTrack = source.trackKind != target.trackKind
+        let microphoneTrackIDs = crossTrack ? Set(self.audioTracks.filter { $0.kind == .microphone }.map(\.id)) : []
+        for index in self.transcriptSegments.indices {
+            var segment = self.transcriptSegments[index]
+            if segment.speakerID == sourceID { segment.speakerID = targetID }
+            if crossTrack, segment.speakerID == targetID, microphoneTrackIDs.contains(segment.sourceTrackID) {
+                segment.isLikelyEcho = true
+            }
+            guard segment != self.transcriptSegments[index] else { continue }
+            segment.revision += 1
+            self.transcriptSegments[index] = segment
         }
         self.speakers[sourceIndex].mergedIntoSpeakerID = targetID
+        if crossTrack { self.speakers[targetIndex].trackKind = .applicationAudio }
         self.updatedAt = Date()
     }
 

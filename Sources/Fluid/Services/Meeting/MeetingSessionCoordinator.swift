@@ -182,16 +182,8 @@ final class MeetingSessionCoordinator: ObservableObject {
             previousAttributionState: MeetingTranscriptAttributionState?,
             previousRevision: Int
         )
-        case merge(
-            sourceID: SessionSpeakerID,
-            targetID: SessionSpeakerID,
-            movedSegments: [(id: MeetingTranscriptSegmentID, previousRevision: Int)]
-        )
         case renameBatch([(speakerID: SessionSpeakerID, previousName: String)])
-        case speakerEdits(
-            previousSpeakers: [MeetingSessionSpeaker],
-            movedSegments: [(id: MeetingTranscriptSegmentID, speakerID: SessionSpeakerID?, revision: Int)]
-        )
+        case speakerEdits(previousSpeakers: [MeetingSessionSpeaker], previousSegments: [MeetingTranscriptSegment])
     }
 
     private var correctionUndoStacks: [MeetingSessionID: [TranscriptCorrection]] = [:]
@@ -1046,11 +1038,7 @@ final class MeetingSessionCoordinator: ObservableObject {
     func editSpeakers(sessionID: MeetingSessionID, edits: MeetingSpeakerEdits) async throws -> MeetingSession {
         try await self.performCorrection(sessionID: sessionID) { session in
             let merges = try edits.resolvedMerges()
-            let previousSpeakers = session.speakers
-            let movedSegments: [(id: MeetingTranscriptSegmentID, speakerID: SessionSpeakerID?, revision: Int)] = session.transcriptSegments.compactMap { segment in
-                guard let speakerID = segment.speakerID, merges[speakerID] != nil else { return nil }
-                return (id: segment.id, speakerID: segment.speakerID, revision: segment.revision)
-            }
+            let before = session
             for source in merges.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
                 if let target = merges[source] { try session.mergeSpeakers(source, into: target) }
             }
@@ -1060,7 +1048,7 @@ final class MeetingSessionCoordinator: ObservableObject {
                 guard !trimmed.isEmpty else { continue }
                 try session.renameSpeaker(id: speakerID, to: trimmed)
             }
-            return .speakerEdits(previousSpeakers: previousSpeakers, movedSegments: movedSegments)
+            return Self.speakerEdits(from: before, to: session)
         }
     }
 
@@ -1112,12 +1100,19 @@ final class MeetingSessionCoordinator: ObservableObject {
     @discardableResult
     func mergeSpeakers(sessionID: MeetingSessionID, source: SessionSpeakerID, into targetID: SessionSpeakerID) async throws -> MeetingSession {
         try await self.performCorrection(sessionID: sessionID) { session in
-            let movedSegments = session.transcriptSegments
-                .filter { $0.speakerID == source }
-                .map { (id: $0.id, previousRevision: $0.revision) }
+            let before = session
             try session.mergeSpeakers(source, into: targetID)
-            return .merge(sourceID: source, targetID: targetID, movedSegments: movedSegments)
+            return Self.speakerEdits(from: before, to: session)
         }
+    }
+
+    /// Keeps the previous copy of every segment the edit touched, so undo can restore them whole.
+    private static func speakerEdits(from before: MeetingSession, to after: MeetingSession) -> TranscriptCorrection {
+        let current = Dictionary(uniqueKeysWithValues: after.transcriptSegments.map { ($0.id, $0) })
+        return .speakerEdits(
+            previousSpeakers: before.speakers,
+            previousSegments: before.transcriptSegments.filter { current[$0.id] != $0 }
+        )
     }
 
     @discardableResult
@@ -1393,16 +1388,6 @@ final class MeetingSessionCoordinator: ObservableObject {
             session.transcriptSegments[segmentIndex].attributionState = previousAttributionState
             session.transcriptSegments[segmentIndex].revision = previousRevision
             return true
-        case let .merge(sourceID, _, movedSegments):
-            guard let index = session.speakers.firstIndex(where: { $0.id == sourceID }) else { return false }
-            session.speakers[index].mergedIntoSpeakerID = nil
-            let previousRevisionByID = Dictionary(uniqueKeysWithValues: movedSegments.map { ($0.id, $0.previousRevision) })
-            for segmentIndex in session.transcriptSegments.indices {
-                guard let previousRevision = previousRevisionByID[session.transcriptSegments[segmentIndex].id] else { continue }
-                session.transcriptSegments[segmentIndex].speakerID = sourceID
-                session.transcriptSegments[segmentIndex].revision = previousRevision
-            }
-            return true
         case let .renameBatch(entries):
             var restored = false
             for entry in entries {
@@ -1411,14 +1396,13 @@ final class MeetingSessionCoordinator: ObservableObject {
                 restored = true
             }
             return restored
-        case let .speakerEdits(previousSpeakers, movedSegments):
+        case let .speakerEdits(previousSpeakers, previousSegments):
             guard Set(session.speakers.map(\.id)) == Set(previousSpeakers.map(\.id)) else { return false }
-            let previous = Dictionary(uniqueKeysWithValues: movedSegments.map { ($0.id, $0) })
+            let previous = Dictionary(uniqueKeysWithValues: previousSegments.map { ($0.id, $0) })
             session.speakers = previousSpeakers
             for index in session.transcriptSegments.indices {
                 guard let original = previous[session.transcriptSegments[index].id] else { continue }
-                session.transcriptSegments[index].speakerID = original.speakerID
-                session.transcriptSegments[index].revision = original.revision
+                session.transcriptSegments[index] = original
             }
             return true
         }

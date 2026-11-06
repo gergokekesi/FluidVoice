@@ -1701,14 +1701,61 @@ final class MeetingSessionModelTests: XCTestCase {
         }
     }
 
-    func testMergeSpeakersAcrossTracksThrows() throws {
+    func testMergingAMicrophoneCopyIntoAMeetingAudioSpeakerMarksItsMicrophoneLinesAsEcho() throws {
         var session = MeetingModelFixture.makeSession()
-        let targetID = UUID()
-        session.speakers.append(MeetingModelFixture.speaker(id: targetID, name: "Mic speaker", trackKind: .microphone))
+        let remoteID = MeetingModelFixture.speakerID
+        let copyID = UUID()
+        session.speakers.append(MeetingModelFixture.speaker(id: copyID, name: "Speaker 2", trackKind: .microphone))
+        let remoteLine = session.transcriptSegments[0]
+        let copiedLine = Self.microphoneLine(speakerID: copyID)
+        session.transcriptSegments = [remoteLine, copiedLine]
 
-        XCTAssertThrowsError(try session.mergeSpeakers(MeetingModelFixture.speakerID, into: targetID)) {
-            XCTAssertEqual($0 as? MeetingDomainError, .cannotMergeSpeakers)
-        }
+        try session.mergeSpeakers(copyID, into: remoteID)
+
+        var echoedLine = copiedLine
+        echoedLine.speakerID = remoteID
+        echoedLine.isLikelyEcho = true
+        echoedLine.revision += 1
+        XCTAssertEqual(session.transcriptSegments, [remoteLine, echoedLine])
+        XCTAssertEqual(session.speakers.map(\.trackKind), [.applicationAudio, .microphone])
+        XCTAssertEqual(session.speakers.map(\.mergedIntoSpeakerID), [nil, remoteID])
+    }
+
+    func testMergingAMeetingAudioSpeakerIntoItsMicrophoneCopyKeepsTheMeetingAudioLinesAudible() throws {
+        var session = MeetingModelFixture.makeSession()
+        let remoteID = MeetingModelFixture.speakerID
+        let copyID = UUID()
+        session.speakers.append(MeetingModelFixture.speaker(id: copyID, name: "Speaker 2", trackKind: .microphone))
+        let remoteLine = session.transcriptSegments[0]
+        let copiedLine = Self.microphoneLine(speakerID: copyID)
+        session.transcriptSegments = [remoteLine, copiedLine]
+
+        try session.mergeSpeakers(remoteID, into: copyID)
+
+        var movedRemoteLine = remoteLine
+        movedRemoteLine.speakerID = copyID
+        movedRemoteLine.revision += 1
+        var echoedLine = copiedLine
+        echoedLine.isLikelyEcho = true
+        echoedLine.revision += 1
+        XCTAssertEqual(session.transcriptSegments, [movedRemoteLine, echoedLine])
+        XCTAssertEqual(session.speakers.map(\.trackKind), [.applicationAudio, .applicationAudio])
+        XCTAssertEqual(session.speakers.map(\.mergedIntoSpeakerID), [copyID, nil])
+    }
+
+    private static func microphoneLine(speakerID: SessionSpeakerID) -> MeetingTranscriptSegment {
+        MeetingTranscriptSegment(
+            id: UUID(),
+            start: MeetingModelFixture.mediaTime(4),
+            end: MeetingModelFixture.mediaTime(7),
+            sourceTrackID: MeetingModelFixture.microphoneTrackID,
+            speakerID: speakerID,
+            text: "Microphone copy",
+            revision: 1,
+            status: .final,
+            overlap: .none,
+            completeness: .complete
+        )
     }
 
     func testMergeLocalUserSpeakerThrows() throws {

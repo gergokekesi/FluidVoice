@@ -159,7 +159,7 @@ struct MeetingAssignSpeakersSheet: View {
                 self.pendingMerge = nil
             }
         } message: { request in
-            Text("All of \(self.speakerName(request.source))’s transcript will belong to \(self.speakerName(request.target)) when you save changes.")
+            Text(self.mergeMessage(for: request))
         }
     }
 
@@ -264,8 +264,7 @@ struct MeetingAssignSpeakersSheet: View {
                         .disabled(self.isSaving)
                 }
             } else if speaker.isLocalUser || targets.isEmpty {
-                Text(speaker.isLocalUser ? "Your microphone voice is kept separate" :
-                    (speaker.trackKind == .microphone ? "No other microphone speakers" : "No other meeting-audio speakers"))
+                Text(speaker.isLocalUser ? "Your microphone voice is kept separate" : "No other speakers to merge with")
                     .font(self.theme.typography.caption)
                     .foregroundStyle(self.theme.palette.tertiaryText)
             }
@@ -273,10 +272,16 @@ struct MeetingAssignSpeakersSheet: View {
     }
 
     private func mergeTargets(for speaker: MeetingSessionSpeaker) -> [MeetingSessionSpeaker] {
-        self.speakers.filter {
-            $0.id != speaker.id && !$0.isLocalUser && $0.trackKind == speaker.trackKind
-                && self.edits.merges[$0.id] == nil
-        }
+        self.speakers.filter { $0.id != speaker.id && !$0.isLocalUser && self.edits.merges[$0.id] == nil }
+    }
+
+    private func mergeMessage(for request: MergeRequest) -> String {
+        let message = "All of \(self.speakerName(request.source))’s transcript will belong to \(self.speakerName(request.target)) when you save changes."
+        let source = self.speakers.first { $0.id == request.source }
+        let target = self.speakers.first { $0.id == request.target }
+        let isCrossTrack = source?.trackKind != target?.trackKind
+        guard isCrossTrack else { return message }
+        return message + " Lines heard through your microphone will be marked as probable echo and hidden."
     }
 
     private func speakerName(_ id: SessionSpeakerID) -> String {
