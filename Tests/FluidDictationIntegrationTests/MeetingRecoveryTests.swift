@@ -165,6 +165,46 @@ final class MeetingRecoveryTests: XCTestCase {
         await coordinator.shutdownForTermination()
     }
 
+    func testMarkingASpeakerDuringRecordingKeepsTheMarkOnTheSession() async throws {
+        let dir = self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MeetingSessionStore(rootDirectory: dir)
+        let capture = StubCaptureController()
+        capture.startResult = MeetingCaptureStartResult(tracks: [self.makeMicrophoneTrack(chunks: [])], firstPresentationTime: nil)
+        let coordinator = MeetingSessionCoordinator(
+            store: store, capture: capture, processing: StubProcessingController(), audioArbiter: StubArbiter()
+        )
+        let started = try await coordinator.startRecording(configuration: self.makeConfiguration())
+
+        try coordinator.markSpeaker(name: " Alice ", pressedAt: Date().addingTimeInterval(-12))
+
+        let hostNow = started.timebase.seconds(hostTime: mach_absolute_time())
+        let mark = try XCTUnwrap(coordinator.activeSession?.speakerMarks?.first)
+        XCTAssertEqual(mark.name, "Alice")
+        XCTAssertEqual(mark.resolution, .pending)
+        XCTAssertEqual(mark.pressedAtHostSeconds, hostNow - 12, accuracy: 1)
+        await coordinator.shutdownForTermination()
+        let saved = try await store.load(id: started.id)
+        XCTAssertEqual(saved?.speakerMarks, [mark])
+    }
+
+    func testMarkingASpeakerWithoutANameIsRejected() async throws {
+        let dir = self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let capture = StubCaptureController()
+        capture.startResult = MeetingCaptureStartResult(tracks: [self.makeMicrophoneTrack(chunks: [])], firstPresentationTime: nil)
+        let coordinator = MeetingSessionCoordinator(
+            store: MeetingSessionStore(rootDirectory: dir), capture: capture, processing: StubProcessingController(), audioArbiter: StubArbiter()
+        )
+        _ = try await coordinator.startRecording(configuration: self.makeConfiguration())
+
+        XCTAssertThrowsError(try coordinator.markSpeaker(name: "  ", pressedAt: Date())) {
+            XCTAssertEqual($0 as? MeetingDomainError, .emptySpeakerName)
+        }
+        XCTAssertEqual(coordinator.activeSession?.speakerMarks, nil)
+        await coordinator.shutdownForTermination()
+    }
+
     func testVoiceProcessingFallbackDoesNotDegradeHealthyRecording() async throws {
         for deliverDuringStart in [false, true] {
             let dir = self.makeTempDirectory()

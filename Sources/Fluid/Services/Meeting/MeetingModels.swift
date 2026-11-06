@@ -13,6 +13,11 @@ nonisolated enum MeetingCaptureMode: String, Codable, CaseIterable, Sendable {
     case inRoom
 
     var capturesComputerAudio: Bool { self != .inRoom }
+
+    /// The track a speaker mark names: the far end on a call, the room microphone otherwise.
+    var markedTrackKind: MeetingAudioTrackKind {
+        self.capturesComputerAudio ? .applicationAudio : .microphone
+    }
 }
 
 nonisolated enum MeetingSessionState: String, Codable, Sendable {
@@ -29,6 +34,10 @@ nonisolated enum MeetingSessionState: String, Codable, Sendable {
 nonisolated enum MeetingAudioTrackKind: String, Codable, CaseIterable, Sendable {
     case applicationAudio
     case microphone
+
+    var label: String {
+        self == .applicationAudio ? "meeting audio" : "microphone"
+    }
 }
 
 nonisolated enum MeetingTrackHealthStatus: String, Codable, Sendable {
@@ -340,6 +349,11 @@ nonisolated struct MeetingTimebaseMetadata: Codable, Equatable, Sendable {
     var machTimebaseNumerator: UInt32
     var machTimebaseDenominator: UInt32
     var firstPresentationTime: MeetingMediaTime?
+
+    func seconds(hostTime: UInt64) -> TimeInterval {
+        guard self.machTimebaseDenominator > 0 else { return 0 }
+        return TimeInterval(hostTime) * TimeInterval(self.machTimebaseNumerator) / TimeInterval(self.machTimebaseDenominator) / 1_000_000_000
+    }
 }
 
 nonisolated struct MeetingAudioFormat: Codable, Equatable, Sendable {
@@ -787,6 +801,27 @@ nonisolated struct MeetingSessionSpeaker: Codable, Identifiable, Equatable, Send
     var mergedIntoSpeakerID: SessionSpeakerID? = nil
 }
 
+/// "This person is speaking now", pressed during recording. Resolved against the final transcript
+/// when processing completes, so the matching voice is named everywhere it speaks.
+nonisolated struct MeetingSpeakerMark: Codable, Equatable, Sendable {
+    nonisolated enum Resolution: Codable, Equatable, Sendable {
+        case pending
+        case named(SessionSpeakerID)
+        case noSpeaker
+        /// The voice already carried this name from an earlier mark.
+        case alreadyNamed(String)
+    }
+
+    /// On the capture host clock, like chunk presentation times, so it converts to transcript time.
+    var pressedAtHostSeconds: TimeInterval
+    var name: String
+    var resolution: Resolution = .pending
+
+    func pressedAtMeetingSeconds(in session: MeetingSession) -> TimeInterval {
+        self.pressedAtHostSeconds - MeetingAnalysisManifest.presentationOrigin(of: session)
+    }
+}
+
 nonisolated struct MeetingTranscriptSegment: Codable, Identifiable, Equatable, Sendable {
     var id: MeetingTranscriptSegmentID
     var start: MeetingMediaTime
@@ -954,6 +989,13 @@ nonisolated struct MeetingSession: Codable, Identifiable, Equatable, Sendable {
     /// Set when the user dismisses a recoverable session so it is not re-offered on next launch.
     /// Optional so pre-M2 persisted manifests still decode.
     var recoveryResolvedAt: Date? = nil
+    /// Optional so sessions written before speaker marks existed still decode.
+    // swiftlint:disable:next discouraged_optional_collection
+    var speakerMarks: [MeetingSpeakerMark]? = nil
+
+    var latestMarkedName: String? {
+        self.speakerMarks?.last?.name
+    }
 
     init(
         id: MeetingSessionID = UUID(),

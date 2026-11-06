@@ -3,11 +3,20 @@ import CoreMedia
 import Foundation
 
 /// Internal live-only source tags: `.you` is the microphone track and `.them` is application audio.
-/// The UI deliberately presents neutral source labels because live capture has no speaker identity;
-/// the offline pipeline resolves speakers and replaces this transcript on completion.
+/// Live capture has no speaker identity, so rows carry a source label, or the latest name the user
+/// marked during recording; the offline pipeline resolves speakers and replaces this transcript on
+/// completion.
 nonisolated enum MeetingLiveSpeaker: Sendable, Equatable {
     case you
     case them
+
+    var trackKind: MeetingAudioTrackKind {
+        self == .you ? .microphone : .applicationAudio
+    }
+
+    var sourceLabel: String {
+        self == .you ? "Microphone" : "Meeting audio"
+    }
 }
 
 nonisolated enum MeetingLiveAvailability: Sendable, Equatable {
@@ -113,20 +122,26 @@ nonisolated enum MeetingLiveBubbleComposer {
     nonisolated struct Row: Identifiable, Equatable {
         var id: UUID
         var speaker: MeetingLiveSpeaker
+        var label: String
         var text: String
         var isPartial: Bool
         var showsLabel: Bool
     }
 
-    static func rows(for snapshot: MeetingLiveTranscriptSnapshot) -> [Row] {
+    /// `latestMarkedName` replaces the source label on the marked track's rows.
+    static func rows(for snapshot: MeetingLiveTranscriptSnapshot, mode: MeetingCaptureMode, latestMarkedName: String?) -> [Row] {
+        func label(_ speaker: MeetingLiveSpeaker) -> String {
+            guard speaker.trackKind == mode.markedTrackKind, let latestMarkedName else { return speaker.sourceLabel }
+            return latestMarkedName
+        }
         var rows = snapshot.utterances.map {
-            Row(id: $0.id, speaker: $0.speaker, text: $0.text, isPartial: false, showsLabel: false)
+            Row(id: $0.id, speaker: $0.speaker, label: label($0.speaker), text: $0.text, isPartial: false, showsLabel: false)
         }
         let activePartials = [MeetingLiveSpeaker.you, .them]
             .compactMap { speaker in snapshot.partials[speaker].map { (speaker, $0) } }
             .sorted { $0.1.start < $1.1.start }
         for (speaker, partial) in activePartials {
-            rows.append(Row(id: partial.id, speaker: speaker, text: partial.text, isPartial: true, showsLabel: false))
+            rows.append(Row(id: partial.id, speaker: speaker, label: label(speaker), text: partial.text, isPartial: true, showsLabel: false))
         }
 
         var previousSpeaker: MeetingLiveSpeaker?

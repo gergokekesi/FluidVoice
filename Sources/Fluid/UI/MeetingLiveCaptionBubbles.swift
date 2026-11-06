@@ -130,11 +130,7 @@ struct MeetingLiveBubbleRow: View, Equatable {
 
     private var isMicrophone: Bool { self.row.speaker == .you }
 
-    private var sourceLabel: String {
-        self.isMicrophone ? "Microphone" : "Meeting audio"
-    }
-
-    /// Distinguish capture sources without claiming that either source belongs to a person.
+    /// Colour tells the capture sources apart; only the label can carry a marked name.
     private var fill: Color {
         let base = self.isMicrophone ? self.theme.palette.accent : MeetingSpeakerPalette.tint(forSpeakerIndex: 0)
         return base.opacity(self.row.isPartial ? 0.05 : 0.10)
@@ -143,7 +139,7 @@ struct MeetingLiveBubbleRow: View, Equatable {
     var body: some View {
         VStack(alignment: self.isMicrophone && !self.documentStyle ? .trailing : .leading, spacing: 4) {
             if self.row.showsLabel {
-                Text(self.sourceLabel)
+                Text(self.row.label)
                     .font(self.theme.typography.captionStrong)
                     .foregroundStyle(self.isMicrophone ? self.theme.palette.accent : self.theme.palette.secondaryText)
             }
@@ -155,7 +151,7 @@ struct MeetingLiveBubbleRow: View, Equatable {
         .frame(maxWidth: .infinity, alignment: self.isMicrophone && !self.documentStyle ? .trailing : .leading)
         .padding(self.isMicrophone ? .leading : .trailing, self.documentStyle ? 0 : 32)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(self.sourceLabel), \(self.row.text)")
+        .accessibilityLabel("\(self.row.label), \(self.row.text)")
         .accessibilityHidden(self.hidesPartialFromAccessibility && self.row.isPartial)
     }
 

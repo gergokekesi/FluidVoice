@@ -279,6 +279,13 @@ final class MeetingSessionCoordinator: ObservableObject {
         }
     }
 
+    private var isRecordingState: Bool {
+        switch self.state {
+        case .recording, .recordingDegraded: true
+        default: false
+        }
+    }
+
     var elapsedTime: TimeInterval {
         guard let session = self.activeSession else { return 0 }
         return max(0, (session.endedAt ?? Date()).timeIntervalSince(session.startedAt))
@@ -1000,6 +1007,23 @@ final class MeetingSessionCoordinator: ObservableObject {
             try session.renameSpeaker(id: speakerID, to: displayName)
             return .rename(speakerID: speakerID, previousName: previousName)
         }
+    }
+
+    /// Records who is speaking on the marked track at `pressedAt`. The name is applied to the
+    /// matching voice when processing completes.
+    func markSpeaker(name: String, pressedAt: Date) throws {
+        guard var session = self.activeSession, self.isRecordingState else {
+            throw MeetingCoordinatorError.noActiveMeeting
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw MeetingDomainError.emptySpeakerName }
+        // The press happened before the name was typed; walk the host clock back by that gap.
+        let hostNow = session.timebase.seconds(hostTime: mach_absolute_time())
+        let mark = MeetingSpeakerMark(pressedAtHostSeconds: hostNow - Date().timeIntervalSince(pressedAt), name: trimmed)
+        session.speakerMarks = (session.speakerMarks ?? []) + [mark]
+        session.updatedAt = Date()
+        self.activeSession = session
+        self.enqueuePersistence(session)
     }
 
     @discardableResult
@@ -1840,6 +1864,7 @@ final class MeetingSessionCoordinator: ObservableObject {
                     detail: "Some recognized text could not be safely placed on the meeting timeline."
                 ))
             }
+            MeetingSpeakerMarkResolver.apply(to: &session)
             session.state = .completed
             session.updatedAt = Date()
             await self.flushQueuedPersistence()

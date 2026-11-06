@@ -327,6 +327,7 @@ struct MeetingTranscriptionView: View {
                         errorMessage: self.actionErrorMessage,
                         onStart: self.startRecording,
                         onStop: self.stopAndTranscribe,
+                        onMarkSpeaker: self.markSpeaker,
                         onRetrySession: { self.retryProcessingSession(id: $0.id, languageCode: MeetingRetranscriptionLanguage.failedAttemptLanguage(for: $0)) },
                         onRetranscribe: { self.retryProcessingSession(id: $0, languageCode: $1) },
                         onRevealAudio: self.revealCapturedAudio,
@@ -862,6 +863,14 @@ struct MeetingTranscriptionView: View {
             microphone: microphone,
             timestampDefaultTitle: !self.setupDraft.titleWasEdited
         )
+    }
+
+    private func markSpeaker(name: String, pressedAt: Date) {
+        do {
+            try self.coordinator.markSpeaker(name: name, pressedAt: pressedAt)
+        } catch {
+            self.actionErrorMessage = error.localizedDescription
+        }
     }
 
     private func stopAndTranscribe() {
@@ -1495,6 +1504,7 @@ struct MeetingTranscriptionCanvas: View {
     let errorMessage: String?
     let onStart: () -> Void
     let onStop: () -> Void
+    var onMarkSpeaker: (String, Date) -> Void = { _, _ in }
     let onRetrySession: (MeetingSession) -> Void
     var onRetranscribe: (MeetingSessionID, String) -> Void = { _, _ in }
     let onRevealAudio: (MeetingSession) -> Void
@@ -1568,7 +1578,8 @@ struct MeetingTranscriptionCanvas: View {
                     trackHealth: trackHealth,
                     liveTranscript: liveTranscript,
                     isStopping: false,
-                    onStop: self.onStop
+                    onStop: self.onStop,
+                    onMarkSpeaker: self.onMarkSpeaker
                 )
             case let .stopping(session, trackHealth, liveTranscript):
                 MeetingRecordingCanvas(

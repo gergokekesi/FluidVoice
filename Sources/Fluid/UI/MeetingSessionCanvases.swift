@@ -7,8 +7,12 @@ struct MeetingRecordingCanvas: View {
     let liveTranscript: MeetingLiveTranscriptSnapshot
     let isStopping: Bool
     let onStop: () -> Void
+    var onMarkSpeaker: (String, Date) -> Void = { _, _ in }
 
     @Environment(\.theme) private var theme
+    /// The moment Mark speaker was pressed; the name is typed afterwards.
+    @State private var markPressedAt: Date?
+    @State private var markName = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: self.theme.metrics.spacing.xl) {
@@ -58,7 +62,7 @@ struct MeetingRecordingCanvas: View {
                     isSubtle: true
                 )
             }
-            MeetingLiveTranscriptCard(snapshot: self.liveTranscript)
+            MeetingLiveTranscriptCard(snapshot: self.liveTranscript, mode: self.session.mode, latestMarkedName: self.session.latestMarkedName)
 
             Divider()
             FluidGlassControlGroup {
@@ -66,27 +70,62 @@ struct MeetingRecordingCanvas: View {
                     HStack(spacing: self.theme.metrics.spacing.lg) {
                         self.recordingFooter
                         Spacer(minLength: 0)
+                        self.markSpeakerButton
                         self.stopButton
                     }
                     VStack(alignment: .leading, spacing: self.theme.metrics.spacing.md) {
                         self.recordingFooter
                         HStack {
                             Spacer(minLength: 0)
+                            self.markSpeakerButton
                             self.stopButton
                         }
                     }
                 }
             }
         }
+        .alert("Who is speaking?", isPresented: Binding(
+            get: { self.markPressedAt != nil },
+            set: { if !$0 { self.markPressedAt = nil } }
+        )) {
+            TextField("Name", text: self.$markName)
+            Button("Cancel", role: .cancel) {
+                self.markPressedAt = nil
+                self.markName = ""
+            }
+            Button("Mark") {
+                if let pressedAt = self.markPressedAt { self.onMarkSpeaker(self.markName, pressedAt) }
+                self.markPressedAt = nil
+                self.markName = ""
+            }
+            .disabled(self.markName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("The voice speaking on the \(self.session.mode.markedTrackKind.label) right now gets this name once the transcript is ready.")
+        }
+    }
+
+    private var footerText: String {
+        if self.isStopping { return "Saving your recording before transcription begins." }
+        if self.session.latestMarkedName != nil { return "Marked names are confirmed after recording." }
+        return "Speaker labels are added after recording."
     }
 
     private var recordingFooter: some View {
-        Text(self.isStopping
-            ? "Saving your recording before transcription begins."
-            : "Speaker labels are added after recording.")
+        Text(self.footerText)
             .font(self.theme.typography.caption)
             .foregroundStyle(self.theme.palette.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var markSpeakerButton: some View {
+        Button {
+            self.markPressedAt = Date()
+        } label: {
+            Label("Mark speaker…", systemImage: "person.crop.circle.badge.checkmark")
+        }
+        .meetingGlassAction()
+        .disabled(self.isStopping)
+        .help("Name the person speaking right now")
     }
 
     private var stopButton: some View {
@@ -135,6 +174,8 @@ struct MeetingRecordingCanvas: View {
 /// diarization pipeline replaces this view's content entirely on completion.
 private struct MeetingLiveTranscriptCard: View {
     let snapshot: MeetingLiveTranscriptSnapshot
+    let mode: MeetingCaptureMode
+    let latestMarkedName: String?
 
     @Environment(\.theme) private var theme
 
@@ -182,7 +223,7 @@ private struct MeetingLiveTranscriptCard: View {
     }
 
     private var rows: [MeetingLiveBubbleComposer.Row] {
-        MeetingLiveBubbleComposer.rows(for: self.snapshot)
+        MeetingLiveBubbleComposer.rows(for: self.snapshot, mode: self.mode, latestMarkedName: self.latestMarkedName)
     }
 
     private var availabilityIndicator: String? {
@@ -458,6 +499,9 @@ struct MeetingResultCanvas: View {
                         )
                     } else if self.session.events.contains(where: { $0.kind == .transcriptCoverageIncomplete }) {
                         MeetingAudioTranscriptNotice(text: "Some recorded audio was not transcribed.")
+                    }
+                    if let detail = self.unappliedSpeakerMarks {
+                        MeetingAudioTranscriptNotice(text: "Some speaker marks could not be applied.", detail: detail)
                     }
                     if !activeSpeakers.isEmpty {
                         VStack(alignment: .leading, spacing: self.theme.metrics.spacing.sm) {
@@ -830,6 +874,21 @@ struct MeetingResultCanvas: View {
 
     private var sourceName: String {
         self.session.capturedApplication?.displayName ?? "In-room meeting"
+    }
+
+    private var unappliedSpeakerMarks: String? {
+        let lines = (self.session.speakerMarks ?? []).compactMap { mark -> String? in
+            let pressedAt = Self.durationText(mark.pressedAtMeetingSeconds(in: self.session))
+            switch mark.resolution {
+            case .pending, .named:
+                return nil
+            case .noSpeaker:
+                return "\(mark.name) at \(pressedAt): nobody was speaking on the \(self.session.mode.markedTrackKind.label)."
+            case let .alreadyNamed(existing):
+                return "\(mark.name) at \(pressedAt): that voice was already marked as \(existing)."
+            }
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     private var emptyTranscriptDescription: String {

@@ -230,7 +230,11 @@ struct MeetingFloatingCaptionsContent: View {
     private static let fluidVoiceIcon: NSImage = NSImage(named: "AppIcon") ?? NSApplication.shared.applicationIconImage
 
     private var rows: [MeetingLiveBubbleComposer.Row] {
-        MeetingLiveBubbleComposer.rows(for: self.coordinator.liveTranscript)
+        MeetingLiveBubbleComposer.rows(
+            for: self.coordinator.liveTranscript,
+            mode: self.coordinator.activeSession?.mode ?? .onlineCall,
+            latestMarkedName: self.coordinator.activeSession?.latestMarkedName
+        )
     }
 
     private var isRecordingActive: Bool {

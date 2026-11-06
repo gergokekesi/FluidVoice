@@ -287,7 +287,7 @@ final class MeetingLiveBubbleComposerTests: XCTestCase {
         snapshot = snapshot.settingPartial(MeetingLivePartial(id: UUID(), text: "them partial", start: 5), for: .them)
         snapshot = snapshot.settingPartial(MeetingLivePartial(id: UUID(), text: "you partial", start: 3), for: .you)
 
-        let rows = MeetingLiveBubbleComposer.rows(for: snapshot)
+        let rows = MeetingLiveBubbleComposer.rows(for: snapshot, mode: .onlineCall, latestMarkedName: nil)
         XCTAssertEqual(rows.map(\.text), ["hello", "you partial", "them partial"])
         XCTAssertEqual(rows.map(\.isPartial), [false, true, true])
         XCTAssertEqual(rows.map(\.showsLabel), [true, false, true])
@@ -298,7 +298,7 @@ final class MeetingLiveBubbleComposerTests: XCTestCase {
         snapshot = snapshot.inserting(self.utterance(.you, "first", start: 0, end: 1))
         snapshot = snapshot.settingPartial(MeetingLivePartial(id: UUID(), text: "still talking", start: 2), for: .you)
 
-        let rows = MeetingLiveBubbleComposer.rows(for: snapshot)
+        let rows = MeetingLiveBubbleComposer.rows(for: snapshot, mode: .onlineCall, latestMarkedName: nil)
         XCTAssertEqual(rows.map(\.showsLabel), [true, false])
     }
 
@@ -306,13 +306,13 @@ final class MeetingLiveBubbleComposerTests: XCTestCase {
         let turnID = UUID()
         var snapshot = MeetingLiveTranscriptSnapshot.empty
         snapshot = snapshot.settingPartial(MeetingLivePartial(id: turnID, text: "in flight text", start: 0), for: .you)
-        let partialRows = MeetingLiveBubbleComposer.rows(for: snapshot)
+        let partialRows = MeetingLiveBubbleComposer.rows(for: snapshot, mode: .onlineCall, latestMarkedName: nil)
         XCTAssertEqual(partialRows.first?.id, turnID)
         XCTAssertEqual(partialRows.first?.isPartial, true)
 
         snapshot = snapshot.inserting(self.utterance(.you, "in flight text finalized", start: 0, end: 2, id: turnID))
             .settingPartial(nil, for: .you)
-        let finalRows = MeetingLiveBubbleComposer.rows(for: snapshot)
+        let finalRows = MeetingLiveBubbleComposer.rows(for: snapshot, mode: .onlineCall, latestMarkedName: nil)
         XCTAssertEqual(finalRows.first?.id, turnID)
         XCTAssertEqual(finalRows.first?.isPartial, false)
     }

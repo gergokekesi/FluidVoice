@@ -2074,7 +2074,7 @@ final class MeetingSessionModelTests: XCTestCase {
     }
 }
 
-private enum MeetingModelFixture {
+enum MeetingModelFixture {
     static let sessionID = Self.uuid(1)
     static let applicationTrackID = Self.uuid(2)
     static let microphoneTrackID = Self.uuid(3)
