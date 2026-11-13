@@ -107,6 +107,7 @@ nonisolated struct MeetingSummaryRoute {
             throw LLMError.invalidRequest("Choose a provider to summarize with, or add one in AI Settings.")
         }
         let model = selection.modelsByProvider[key] ?? ""
+        if providerID == MeetingSummaryClaudeCode.providerID { return MeetingSummaryClaudeCode.route(model: model) }
         guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LLMError.invalidRequest("Choose a summary model.")
         }
@@ -214,6 +215,15 @@ final nonisolated class MeetingSummaryRemoteService: @unchecked Sendable {
         // An explicit safety bound, not a claim about every provider's context window.
         guard transcript.utf8.count <= 512_000 else {
             throw LLMError.invalidRequest("This transcript is too large to summarize in one request. Export it in sections or use a shorter meeting.")
+        }
+        if route.providerID == MeetingSummaryClaudeCode.providerID {
+            let text = try await MeetingSummaryClaudeCode.run(
+                transcript: transcript,
+                systemPrompt: Self.prompt(for: kind, customInstructions: customInstructions),
+                model: route.modelID
+            )
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw MeetingPostProcessingError.invalidOutput }
+            return text
         }
         let response = try await self.client.call(self.configuration(
             transcript: transcript,

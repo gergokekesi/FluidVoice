@@ -151,6 +151,20 @@ final class AppServices: ObservableObject {
                 )
             }
             .store(in: &self.cancellables)
+        coordinator.$state
+            .receive(on: DispatchQueue.main)
+            .scan((MeetingCoordinatorState?.none, MeetingCoordinatorState.idle)) { ($0.1, $1) }
+            .sink { [weak coordinator] previous, current in
+                if let coordinator, case let .recording(id) = current, let session = coordinator.activeSession, session.id == id {
+                    MeetingAutoSummarizer.shared.recordingStarted(session, coordinator: coordinator)
+                }
+                guard let coordinator,
+                      let id = MeetingAutoSummarizer.transcribedSessionID(from: previous, to: current),
+                      let session = coordinator.latestCompletedSession, session.id == id
+                else { return }
+                MeetingAutoSummarizer.shared.recordingTranscribed(session, coordinator: coordinator)
+            }
+            .store(in: &self.cancellables)
         Task { @MainActor in
             guard SettingsStore.shared.fluidMeetEnabled else { return }
             MeetingRecordingPillController.shared.activate(coordinator: coordinator)

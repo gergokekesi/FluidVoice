@@ -45,7 +45,7 @@ struct MeetingSummaryView: View {
     }
 
     private var hasChoices: Bool {
-        !self.catalog.isEmpty || self.onDeviceModel != nil
+        !self.modelOptions.isEmpty
     }
 
     private var needsCustomPrompt: Bool {
@@ -176,7 +176,7 @@ struct MeetingSummaryView: View {
 
     /// Every model a summary can use: the one on this Mac first, then each verified provider's.
     private var modelOptions: [CommandModelOption] {
-        guard let onDeviceModel else { return self.catalog }
+        guard let onDeviceModel else { return MeetingSummaryClaudeCode.options + self.catalog }
         // The model's own name stands in for its ID, which is not meant to be read.
         return [CommandModelOption(
             providerID: MeetingSummaryOnDevice.providerID,
@@ -453,6 +453,7 @@ struct MeetingSummaryView: View {
         self.catalog = self.settings.commandModeModelCatalog()
         self.onDeviceModel = self.controller.model
         self.catalogLoaded = true
+        self.preferences.selection = MeetingSummaryClaudeCode.defaulted(self.preferences.selection, hasOnDeviceModel: self.onDeviceModel != nil)
         // First use starts from the AI Settings provider when it is verified; later choices stay independent.
         if self.providerID.isEmpty, let first = self.providers.first {
             let global = ModelRepository.shared.providerKey(for: self.settings.selectedProviderID)
