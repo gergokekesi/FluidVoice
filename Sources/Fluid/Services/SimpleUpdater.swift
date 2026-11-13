@@ -538,17 +538,13 @@ final class SimpleUpdater: ObservableObject {
     }
 
     private func presentUpdateOffer(version: String, automatic: Bool) {
-        let channel = self.betaChannel
         let revision = self.channelRevision
+        // This build is a personal fork; installing the official release would replace it.
         self.updatePrompts.presentFloatingPrompt(
             title: "Update Available",
-            message: "FluidVoice \(version) is now available. The app will restart automatically after installation.",
+            message: "FluidVoice \(version) is out. Ask Claude to merge it into your fork.",
             actions: [
-                FloatingPromptAction(title: "Install Now") { [weak self] in
-                    guard let self, self.availableUpdateVersion == version, self.channelRevision == revision, !self.isUpdateInProgress else { return }
-                    self.installApprovedUpdate(version: version, channel: channel)
-                },
-                FloatingPromptAction(title: "Later") { [weak self] in
+                FloatingPromptAction(title: "OK") { [weak self] in
                     guard let self, self.availableUpdateVersion == version, self.channelRevision == revision else { return }
                     #if DEBUG
                     if self === Self.shared, UpdatePromptSimulation.isEnabled { return }
