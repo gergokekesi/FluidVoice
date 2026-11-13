@@ -374,6 +374,8 @@ struct MeetingRecordingPillContent: View {
             height: MeetingOverlayPresentation.pill.visibleSize.height
         )
         .contentShape(Capsule())
+        // The tap would otherwise swallow the mouse-down that window-background dragging needs.
+        .gesture(WindowDragGesture())
         // The whole capsule opens the captions window; only the stop button opts out.
         .onTapGesture { self.pill.expand() }
         .background(self.compactSurface)
