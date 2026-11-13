@@ -256,6 +256,7 @@ final class MeetingAutoDetectorTests: XCTestCase {
             ("us.zoom.xos", "/Applications/zoom.us.app"),
             ("com.cisco.webexmeetingsapp", "/Applications/Webex.app"),
             ("Cisco-Systems.Spark", "/Applications/Webex New.app"),
+            ("com.gather.GatherV2", "/Applications/GatherV2.app"),
         ]
         for (bundle, root) in apps {
             let result = MeetingAudioProcessResolver.activeOwnerInputByPID(snapshot: .init(

@@ -16,9 +16,10 @@ final class MeetingDetectionPromptController: ObservableObject {
         case fullscreenOtherApp = "fullscreen-other-app"
     }
 
-    static let panelSize = NSSize(width: 392, height: 120)
+    static let panelSize = NSSize(width: 560, height: 190)
     private static let defaultTopInset: CGFloat = 12
     static let autoDismissSeconds: TimeInterval = 20
+    static let autoRecordSeconds: TimeInterval = 3
     static let suppressionRetryInterval: TimeInterval = 0.5
 
     enum ReminderPresentationDecision: Equatable {
@@ -42,6 +43,13 @@ final class MeetingDetectionPromptController: ObservableObject {
         cta == .setup ? .openSetup : .startRecording
     }
 
+    /// A record prompt starts recording when its countdown ends; hovering the prompt pauses it.
+    enum RecordingCountdown: Equatable {
+        case none
+        case running(deadline: Date)
+        case paused
+    }
+
     enum CheapSuppressionDecision: Equatable {
         case suppressed(SuppressionReason)
         case presentNow
@@ -53,6 +61,7 @@ final class MeetingDetectionPromptController: ObservableObject {
     @Published private(set) var appDisplayName: String = ""
     @Published private(set) var startErrorMessage: String?
     @Published private(set) var isStarting = false
+    @Published private(set) var recordingCountdown: RecordingCountdown = .none
 
     var onStart: ((UUID) async throws -> Void)?
     var onSetup: ((UUID) -> Void)?
@@ -146,6 +155,8 @@ final class MeetingDetectionPromptController: ObservableObject {
                 DebugLogger.shared.log("prompt-start-failed error=\(error)", source: "MeetingAutoDetector")
                 self.startErrorMessage = Self.startErrorMessage(from: error, appDisplayName: self.appDisplayName)
                 self.isStarting = false
+                self.recordingCountdown = .none
+                self.remainingAutoDismissSeconds = Self.autoDismissSeconds
                 if !self.isPointerInsidePanel() {
                     self.resumeAutoDismiss()
                 }
@@ -180,6 +191,7 @@ final class MeetingDetectionPromptController: ObservableObject {
         self.autoDismissTask = nil
         self.autoDismissLegStartedAt = nil
         self.isAutoDismissPaused = true
+        if self.recordingCountdown != .none { self.recordingCountdown = .paused }
     }
 
     func resumeAutoDismiss() {
@@ -237,13 +249,17 @@ final class MeetingDetectionPromptController: ObservableObject {
             }
         }
         DebugLogger.shared.log("prompt-shown bundle=\(request.bundleIdentifier)", source: "MeetingAutoDetector")
+        let autoRecords = request.cta == .record
         AccessibilityNotification.Announcement(
-            "Record this meeting? \(self.appDisplayName). Nothing is recording yet."
+            autoRecords
+                ? "Recording \(self.appDisplayName) in \(Int(Self.autoRecordSeconds)) seconds."
+                : "Record this meeting? \(self.appDisplayName). Nothing is recording yet."
         ).post()
 
         self.clearAutoDismiss()
-        self.remainingAutoDismissSeconds = remainingSeconds
+        self.remainingAutoDismissSeconds = autoRecords ? Self.autoRecordSeconds : remainingSeconds
         self.isAutoDismissPaused = self.isPointerInsidePanel(panel)
+        self.recordingCountdown = autoRecords ? .paused : .none
         self.scheduleAutoDismiss(for: request.episodeID)
     }
 
@@ -256,7 +272,8 @@ final class MeetingDetectionPromptController: ObservableObject {
         self.autoDismissTask = nil
         self.autoDismissLegStartedAt = nil
         self.isAutoDismissPaused = false
-        self.remainingAutoDismissSeconds = Self.autoDismissSeconds
+        // A record prompt waits out dictation for as long as the call lasts; the detector withdraws it when the call ends.
+        self.remainingAutoDismissSeconds = request.cta == .record ? .infinity : Self.autoDismissSeconds
         self.scheduleSuppressionRetry()
     }
 
@@ -386,23 +403,35 @@ final class MeetingDetectionPromptController: ObservableObject {
         self.autoDismissLegStartedAt = nil
         self.remainingAutoDismissSeconds = 0
         self.isAutoDismissPaused = false
+        self.recordingCountdown = .none
     }
 
     private func scheduleAutoDismiss(for episodeID: UUID) {
         guard !self.isAutoDismissPaused else { return }
         guard self.remainingAutoDismissSeconds > 0 else {
-            self.onTimeout?(episodeID)
-            self.hide()
+            self.autoDismissEnded(for: episodeID)
             return
         }
         let delayNanoseconds = UInt64(self.remainingAutoDismissSeconds * 1_000_000_000)
-        self.autoDismissLegStartedAt = Date()
+        let startedAt = Date()
+        self.autoDismissLegStartedAt = startedAt
+        if self.recordingCountdown != .none {
+            self.recordingCountdown = .running(deadline: startedAt.addingTimeInterval(self.remainingAutoDismissSeconds))
+        }
         self.autoDismissTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard !Task.isCancelled, let self, self.request?.episodeID == episodeID else { return }
-            self.onTimeout?(episodeID)
-            self.hide()
+            self.autoDismissEnded(for: episodeID)
         }
+    }
+
+    private func autoDismissEnded(for episodeID: UUID) {
+        if self.recordingCountdown != .none {
+            self.startTapped()
+            return
+        }
+        self.onTimeout?(episodeID)
+        self.hide()
     }
 
     static func remainingAutoDismissSeconds(_ remaining: TimeInterval, after elapsed: TimeInterval) -> TimeInterval {
@@ -530,46 +559,50 @@ private struct MeetingDetectionPromptContent: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 16) {
                 if let icon = self.controller.appIcon {
                     Image(nsImage: icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 34, height: 34)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
                     Image(systemName: "person.2.wave.2.fill")
-                        .font(.fluidSystem(size: 20))
+                        .font(.fluidSystem(size: 34))
                         .foregroundStyle(self.theme.palette.accent)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 64, height: 64)
                         .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .fill(self.theme.palette.accent.opacity(0.12))
                         )
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Record this meeting?")
-                        .font(self.theme.typography.bodyStrong)
+                VStack(alignment: .leading, spacing: 4) {
+                    self.headline
+                        .font(.fluidSystem(size: 24, weight: .semibold))
                         .foregroundStyle(self.theme.palette.primaryText)
                     Text(self.controller.appDisplayName)
-                        .font(self.theme.typography.caption)
+                        .font(.fluidSystem(size: 15))
                         .foregroundStyle(self.theme.palette.secondaryText)
                         .lineLimit(1)
                 }
                 Spacer()
+                if case let .running(deadline) = self.controller.recordingCountdown {
+                    TimelineView(.periodic(from: .now, by: 0.2)) { context in
+                        Text("\(max(1, Int(deadline.timeIntervalSince(context.date).rounded(.up))))")
+                            .font(.fluidSystem(size: 56, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(self.theme.palette.accent)
+                    }
+                }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 if let startErrorMessage = self.controller.startErrorMessage {
                     Label(startErrorMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(self.theme.typography.caption)
                         .foregroundStyle(self.theme.palette.warning)
                         .lineLimit(1)
-                } else if self.controller.isStarting {
-                    Label("Starting…", systemImage: "waveform")
-                        .font(self.theme.typography.caption)
-                        .foregroundStyle(self.theme.palette.secondaryText)
                 }
 
                 Spacer(minLength: 8)
@@ -579,39 +612,36 @@ private struct MeetingDetectionPromptContent: View {
                         self.controller.dontShowAgainTapped()
                     }
                 } label: {
-                    Text("Not now")
+                    Text(self.controller.recordingCountdown == .none ? "Not now" : "Cancel")
                 } primaryAction: {
                     self.controller.dismissTapped()
                 }
                 .menuStyle(.button)
-                .fluidButton(.compact, size: .small)
+                .fluidButton(.compact, size: .large)
                 .disabled(self.controller.isStarting)
                 .help("Click to dismiss. Use the arrow for more options.")
 
                 Button {
                     self.controller.startTapped()
                 } label: {
-                    Label(
-                        self.controller.request?.cta == .setup ? "Set up" : "Record",
-                        systemImage: self.controller.request?.cta == .setup ? "gearshape" : "record.circle"
-                    )
+                    Label(self.primaryButtonTitle, systemImage: self.controller.request?.cta == .setup ? "gearshape" : "record.circle")
                 }
-                .fluidButton(.accent, size: .small)
+                .fluidButton(.accent, size: .large)
                 .disabled(self.controller.isStarting)
             }
         }
-        .padding(14)
+        .padding(20)
         .frame(
             width: MeetingDetectionPromptController.panelSize.width,
             height: MeetingDetectionPromptController.panelSize.height,
             alignment: .top
         )
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(self.theme.palette.contentBackground.opacity(0.98))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(self.theme.palette.separator.opacity(0.55), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.35), radius: 16, x: 0, y: 6)
@@ -623,7 +653,28 @@ private struct MeetingDetectionPromptContent: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Record this meeting? \(self.controller.appDisplayName). Nothing is recording yet. Record, or dismiss.")
+        .accessibilityLabel(self.accessibilityText)
+    }
+
+    private var headline: Text {
+        if self.controller.isStarting { return Text("Starting recording…") }
+        switch self.controller.recordingCountdown {
+        case .none: return Text("Record this meeting?")
+        case .running: return Text("Recording in")
+        case .paused: return Text("Recording paused")
+        }
+    }
+
+    private var primaryButtonTitle: String {
+        if self.controller.request?.cta == .setup { return "Set up" }
+        return self.controller.recordingCountdown == .none ? "Record" : "Record now"
+    }
+
+    private var accessibilityText: String {
+        if self.controller.recordingCountdown == .none {
+            return "Record this meeting? \(self.controller.appDisplayName). Nothing is recording yet. Record, or dismiss."
+        }
+        return "Recording \(self.controller.appDisplayName) shortly. Cancel to stop it."
     }
 }
 

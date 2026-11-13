@@ -19,6 +19,7 @@ nonisolated enum MeetingAppRegistry {
         "com.microsoft.teams",
         "com.cisco.webexmeetingsapp",
         "Cisco-Systems.Spark",
+        "com.gather.GatherV2",
     ]
 
     /// Bundle identifiers for browsers eligible for Tier 2 URL reading. Google Meet's "app" is a
@@ -89,6 +90,7 @@ nonisolated enum MeetingAppRegistry {
         "com.microsoft.teams",
         "com.cisco.webexmeetingsapp",
         "Cisco-Systems.Spark",
+        "com.gather.GatherV2",
     ]
 
     private static let pickerBrowserOrder: [String] = [
